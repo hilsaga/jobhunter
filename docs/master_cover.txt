@@ -1,0 +1,18 @@
+LAU, Hon Hei (Hilson)
+Hong Kong | hilsaga@gmail.com | +852 90221206
+AI Director and Architect
+
+Dear Hiring Manager,
+
+I am writing for senior AI, operations, and delivery leadership roles. I work in this order: AI direction and architecture, then project management, then business analysis and forward-deployed engineering, with hands-on software engineering underneath.
+
+At Garlican Tech I am Executive Director and Technical Co-Founder. I architected agentic AI workflows on ACP and MCP servers for multi-agent signal validation and market sentiment analysis. I also set the platform roadmap, ran the SDLC, and led technical sales with B2B institutional clients. The engineering work, including Next.js, React, Python services, and TradingView, MultiCharts, and broker integrations, is how that architecture ships. I used Cursor for copilot development of the trading platform and tools proof of concept.
+
+Before that, as Operations Director and Systems Product Manager at Investtab.com, I directed operations and planning that scaled a real-time stock platform from 0 to 30,000+ active users, including APAC channel expansion and partnerships with financial KOLs such as MoneyTab.
+
+My business analysis and forward-deployed work includes IT advisory at KPMG China and onsite delivery for GSMA at Mobile World Congress in Barcelona and Shanghai. I translate financial and operational logic into specifications, UAT, and live launch support. An M.S. in Statistics and SOA/CAS exams P, FM, MFE, and MLC sit behind the risk and modeling work.
+
+I would welcome a conversation about AI architecture, delivery leadership, or a forward-deployed role that still needs an engineer who can build.
+
+Sincerely,
+Hilson Lau (LAU, Hon Hei)

@@ -1,0 +1,10 @@
+generated_docs/
+applications/
+
+# Any file or folder whose name starts with a dot.
+.*
+!.gitignore
+
+__pycache__/
+*.py[cod]
+logs/

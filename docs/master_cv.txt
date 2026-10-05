@@ -1,0 +1,58 @@
+LAU, Hon Hei (Hilson)
+Hong Kong | +852 90221206 | hilsaga@gmail.com
+Languages: Native Cantonese and Mandarin, Fluent English
+AI Director and Architect | Technical Project Management | Business Analyst and Forward Deployed Engineer
+
+PROFESSIONAL SUMMARY
+AI director and architect for agentic systems, technical operations, and delivery planning, with 10+ years shipping fintech products. The work is ordered as AI leadership, then project management, then business analysis and forward-deployed delivery, with software engineering as the execution layer underneath. Co-founded Garlican Tech and directed Investtab.com from 0 to 30,000+ active users. Holds an M.S. in Statistics and passed SOA/CAS exams P, FM, MFE, and MLC.
+
+KEYWORDS
+AI Director and Architect, Agentic AI, LLM / MCP / ACP, Prompt Engineering and AI Copilot, Technical Project Management, Business Analyst, Forward Deployed Engineer, Full Stack, AI Engineer, Python, Fintech, Quant Trading
+
+CORE COMPETENCIES & TECHNICAL STACK
+Agentic AI, autonomous agents, ACP, MCP, LLM tool calling, prompt engineering, AI copilot, AI architecture
+Executive leadership, roadmap planning, SDLC, Agile, Scrum, UAT, budget allocation, cross-functional management
+Business analysis, BRD, FSD, ERD, schema design, stakeholder workshops, runbooks, onsite launch, forward deployment
+Python, Node.js, FastAPI, Next.js, React, React Native, TypeScript, PHP, HTML5, Linux
+WebSockets, REST APIs, AWS, SQL, MySQL, MongoDB, NoSQL
+TradingView, MultiCharts, broker systems, statistical modeling, algorithmic backtesting, real-time market data
+
+PROFESSIONAL EXPERIENCE
+Garlican Tech Limited | Hong Kong  -  Executive Director, Technical Co-Founder and Lead AI (Nov 2019 - Present)
+- Directed AI architecture for agentic workflows, including ACP and MCP servers that automate multi-agent signal validation and market sentiment analysis inside LLM networks.
+- Led product and project planning across the full SDLC, including the platform roadmap, client requirement gathering, and technical sales for B2B institutional clients.
+- Architected a B2B quant-trading ecosystem that lets non-technical traders compose, backtest, and execute algorithmic strategies through a zero-code visual builder.
+- Used Cursor for copilot development of the trading platform and tools proof of concept.
+- Forward-deployed the platform with institutional clients, translating operating needs into delivery plans and implementation support.
+- Directed the engineering execution layer: Next.js and React UI architecture, Python microservices for order routing and risk checks, and API and WebSocket integrations with TradingView, MultiCharts, and Broker Supplied Systems.
+
+Investtab.com | Hong Kong  -  Operations Director and Systems Product Manager (May 2015 - Nov 2019)
+- Directed technical operations, product planning, and expansion, scaling the financial analysis and real-time stock watchlist platform from zero to 30,000+ active retail investors.
+- Planned cross-functional roadmaps, budget allocation, and APAC B2B/B2C channel expansion.
+- Partnered with financial KOLs, including MoneyTab, to turn market commentary and stock analysis methods into platform features.
+- Architected high-concurrency real-time stock data feeds, dynamic charts, and watchlist alerts across web and mobile (React, React Native, Node.js, Python) on SQL and NoSQL schemas.
+
+KPMG China | Hong Kong  -  Assistant Manager, IT Advisory and Business Analysis (Dec 2015 - Apr 2016)
+- Led business analysis between enterprise stakeholders and engineering teams, translating financial and operational logic into technical specifications.
+- Managed delivery governance, UAT schedules, and production deployment for major corporate clients.
+
+GSMA Limited | Hong Kong  -  Business Analyst, Customer Care and Registration, Event Technology (Oct 2014 - Jul 2015)
+- GSMA hosts Mobile World Congress in Barcelona and Shanghai, welcoming 100,000+ industry executives.
+- Managed the delivery lifecycle for high-concurrency event registration and customer care platforms from scoping through live launch.
+- Forward-deployed onsite at MWC Barcelona and Shanghai, providing high-availability infrastructure support during the events.
+- Ran discovery workshops with internal business units and global vendors, then authored runbooks, training, and UAT for multi-tier registration platforms.
+- Designed registration analytics portals and executive dashboards.
+
+C2Square International LTD | Hong Kong  -  Business Analyst and iOS Developer (Feb 2014 - May 2014)
+- Authored ERD diagrams, I/O specifications, and mobile proof-of-concept applications with SQL backends.
+
+nxTomo Games LTD | Hong Kong  -  Business Analyst (Feb 2013 - Feb 2014)
+- Designed database schemas on Linux, SQL, and MongoDB, and built real-time PHP analytics dashboards for executive reporting.
+
+Century Beyond Intl Ltd | San Jose, CA, USA  -  Programmer and Business Analyst (May 2010 - Nov 2012)
+- Turned client business models into working web and mobile prototypes (HTML5, PHP, SQL).
+
+EDUCATION
+Master of Science (M.S.) in Statistics | West Virginia University, USA (Aug 2004 - May 2009)
+Bachelor of Arts (B.A.) in Economics and Statistics (Double Major) | University of California, Davis, USA (Sept 2001 - Dec 2003)
+SOA/CAS exams passed: P (Probability), FM (Financial Mathematics), MFE (Models for Financial Economics), MLC (Models for Life Contingencies). VEE validation in Applied Statistics, Corporate Finance, and Economics.
