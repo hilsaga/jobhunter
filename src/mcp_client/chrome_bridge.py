@@ -238,16 +238,31 @@ class _ChromeSession:
             if not path.is_file():
                 raise ChromeInteractionError(f"Upload file does not exist: {path}")
             absolute.append(str(path.resolve()))
-        result = await self._call(
-            "upload",
-            {
-                "paths": absolute,
-                "path": absolute[0] if absolute else "",
-                "selector": selector,
-                "description": description or "resume file upload",
-            },
-        )
-        return _result_text(result) or "uploaded"
+        del selector, description
+        await self._dismiss_file_chooser()
+        result = await self._call("run_code", {"code": file_input_script(Path(absolute[0]))})
+        placed = _unwrap_eval(_result_text(result)).strip()
+        logger.info("File input result: %s", placed[:200])
+        if placed == "no-file-input":
+            raise ChromeInteractionError(
+                "This page has no file field yet. Open the application form so the CV field is visible, "
+                "then choose the file again. Leave the Playwright bar up, and do not click the site's upload button."
+            )
+        if not placed.startswith("set:"):
+            raise ChromeInteractionError(
+                "The page did not take the file. Open the application form, leave the Playwright bar up, "
+                "and choose the file again without clicking the site's upload button."
+            )
+        return placed
+
+    async def _dismiss_file_chooser(self) -> None:
+        """Drop a file dialog Playwright already captured. Supplying files that way hangs on real Chrome."""
+        if not self._resolve_optional("upload"):
+            return
+        try:
+            await self._call("upload", {}, timeout=8)
+        except ChromeInteractionError as exc:
+            logger.info("No file dialog was waiting: %s", exc)
 
     async def focus_site(self, site_urls: list[str]) -> str:
         """Read the Chrome tab in front. Do not switch to a different job tab."""
@@ -301,14 +316,14 @@ class _ChromeSession:
             return str(visible[0].get("url") or "")
         return ""
 
-    async def _call(self, action: str, arguments: dict[str, object]) -> object:
+    async def _call(self, action: str, arguments: dict[str, object], timeout: float | None = None) -> object:
         tool_name = self._resolve(action)
         payload = adapt_arguments(self._schemas.get(tool_name, {}), arguments)
         logger.info("Chrome MCP %s via %s", action, tool_name)
         logger.debug("Chrome MCP payload keys: %s", sorted(payload))
         call_tool = getattr(self._client, "call_tool")
         try:
-            result = await asyncio.wait_for(call_tool(tool_name, payload), timeout=self._timeout)
+            result = await asyncio.wait_for(call_tool(tool_name, payload), timeout=timeout or self._timeout)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -532,6 +547,69 @@ def _parse_focus_rows(text: str) -> list[dict[str, object]]:
     if not isinstance(loaded, list):
         return []
     return [row for row in loaded if isinstance(row, dict)]
+
+
+def file_input_script(path: Path) -> str:
+    """Place a local file on the page without Chrome's file window.
+
+    Playwright's upload command asks real Chrome for a custom debugger call that
+    never returns, so the CV field is filled from the page instead.
+    """
+    data = path.read_bytes()
+    if len(data) > 8_000_000:
+        raise ChromeInteractionError(f"{path.name} is too large to place while Playwright is attached.")
+    payload = json.dumps(
+        {
+            "b64": base64.b64encode(data).decode("ascii"),
+            "name": path.name,
+            "type": _upload_mime(path),
+        }
+    )
+    return f"""async (page) => {{
+  const payload = {payload};
+  const inputs = page.locator('input[type="file"]');
+  const count = await inputs.count();
+  if (!count) return "no-file-input";
+  let index = 0;
+  let best = -100;
+  for (let i = 0; i < count; i++) {{
+    const score = await inputs.nth(i).evaluate((node) => {{
+      const blob = [node.name, node.id, node.accept, node.className, node.getAttribute("aria-label")].join(" ").toLowerCase();
+      let value = 0;
+      if (/cv|resume|curriculum|upload/.test(blob)) value += 2;
+      if (/pdf|doc/.test(blob)) value += 1;
+      if (node.disabled) value -= 5;
+      return value;
+    }});
+    if (score > best) {{
+      best = score;
+      index = i;
+    }}
+  }}
+  const placed = await inputs.nth(index).evaluate((node, payload) => {{
+    const binary = atob(payload.b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const file = new File([bytes], payload.name, {{ type: payload.type }});
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    node.files = transfer.files;
+    node.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    node.dispatchEvent(new Event("change", {{ bubbles: true }}));
+    return node.files && node.files[0] ? node.files[0].name : "";
+  }}, payload);
+  return placed ? "set:" + placed : "empty";
+}}"""
+
+
+def _upload_mime(path: Path) -> str:
+    return {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".txt": "text/plain",
+        ".rtf": "application/rtf",
+    }.get(path.suffix.lower(), "application/octet-stream")
 
 
 def _unwrap_eval(text: str) -> str:

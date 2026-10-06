@@ -622,10 +622,10 @@ class ApplicationRunner:
         self.console.info(f"CV: {self._display(cv_path)}")
         self.console.info(f"Cover letter: {self._display(letter_path)}")
 
-    def _llm_match_review(self, job: JobListing, report):  # type: ignore[no-untyped-def]
+    def _llm_match_review(self, job: JobListing, report, specs: list[Specialization] | None = None):  # type: ignore[no-untyped-def]
         if not self.llm.enabled:
             return report
-        catalog = "\n".join(f"- {spec.title}: {', '.join(spec.skills[:8])}" for spec in self.specs)
+        catalog = "\n".join(f"- {spec.title}: {', '.join(spec.skills[:8])}" for spec in (specs or self.specs))
         data = self.llm.complete_json(
             "Score how well the saved CVs fit this job. Use only the job text and the CV list. "
             "Do not invent employers, dates, degrees, or skills. "
@@ -635,10 +635,9 @@ class ApplicationRunner:
         )
         if not data:
             return report
-        match = _score_value(data.get("match"), report.match)
-        proceed = _score_value(data.get("proceed"), report.proceed)
-        reason = str(data.get("reason") or "").strip() or report.reason
-        return type(report)(match=match, proceed=proceed, reason=reason, closest=report.closest)
+        extra = str(data.get("reason") or "").strip()
+        reason = report.reason if not extra or extra in report.reason else f"{report.reason}\n{extra}"
+        return type(report)(match=report.match, proceed=report.proceed, reason=reason, closest=report.closest)
 
     def _suggest_for_job(self, job: JobListing) -> tuple[Specialization, Path, Path]:
         spec, created = self._materials_for_job(job)
@@ -700,20 +699,43 @@ class ApplicationRunner:
         return None
 
     def customize_for_job(self, job: JobListing) -> Specialization:
-        """Pick the generated CV whose title is closest to this job."""
+        """Write a new CV and cover from the closest saved CV, aimed at this job."""
         if self.profile is None or not self.specs:
             self._load_existing_documents()
+        bases = [spec for spec in self.specs if not spec.area.startswith("custom_")]
         choice = choose_materials(
             job.description or job.title,
-            self.specs,
+            bases or self.specs,
             self.profile.interested_keywords,
             self.profile.candidate,
             job.title,
         )
         if choice is None:
             raise DocsMissing("No saved CV to match with this job.")
-        spec = choice.specialization
-        self.console.info(f"Best saved CV for {job.title}: {spec.title}")
+        base = choice.specialization
+        self.console.info(f"Best saved CV for {job.title}: {base.title}")
+        spec = tailor_specialization(
+            self.profile.candidate,
+            base,
+            job,
+            choice.emphasis,
+            self.llm,
+        )
+        token = job.job_id
+        if job.url.startswith(("http://", "https://")):
+            token = job_id_from_url(job.url)
+        area = slugify(f"custom_{token}", fallback="custom_job", limit=60)
+        title = " ".join((job.title or spec.title).split()) or spec.title
+        spec = spec.model_copy(update={"area": area, "title": title})
+        self.specs = [item for item in self.specs if item.area != area]
+        self.specs.append(spec)
+        self.profile.extra_job_titles = _remember_title(self.profile.extra_job_titles, title)
+        if area not in self.profile.specializations:
+            self.profile.specializations = [*self.profile.specializations, area]
+        self._save_profile()
+        cv_path, letter_path = self._write_pdfs(spec)
+        self.console.info(f"CV: {cv_path}")
+        self.console.info(f"Cover letter: {letter_path}")
         return spec
 
     def _create_pair(self, job: JobListing) -> Specialization:
@@ -1219,24 +1241,6 @@ def _search_queries(profile: TargetProfile, specs: list[Specialization]) -> list
     if not queries:
         queries = [spec.title for spec in specs if spec.title]
     return queries[:5] or ["software engineer"]
-
-
-def _score_value(value: object, fallback: int) -> int:
-    if isinstance(value, bool) or value is None:
-        return fallback
-    if isinstance(value, (int, float)):
-        number = float(value)
-    elif isinstance(value, str):
-        digits = "".join(char for char in value if char.isdigit() or char == ".")
-        if not digits:
-            return fallback
-        try:
-            number = float(digits)
-        except ValueError:
-            return fallback
-    else:
-        return fallback
-    return max(0, min(100, int(round(number))))
 
 
 def _job_from_open_page(html: str) -> JobListing:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -13,9 +14,11 @@ from src.generator.heuristic import synthesize
 from src.generator.llm import LLMClient
 from src.generator.pdf_builder import write_cv
 from src.mcp_client.chrome_bridge import (
+    _ChromeSession,
     _unwrap_eval,
     adapt_arguments,
     choose_focused_tab,
+    file_input_script,
     is_playwright_status_page,
     parse_browser_tabs,
     snapshot_target,
@@ -23,7 +26,7 @@ from src.mcp_client.chrome_bridge import (
 from src.models import CandidateBaseline, JobListing, Specialization, TargetProfile
 from src.parsers.doc_parser import DocParser, load_sites
 from src.pipeline.application_runner import ApplicationRunner, RunConfig
-from src.pipeline.matching import MatchAssessment, submission_confidence
+from src.pipeline.matching import MatchAssessment, assess_match, submission_confidence
 from src.pipeline.page_extract import extract_listings, plan_form
 from src.cli.human_input import HumanInput
 
@@ -728,7 +731,7 @@ Master of Science (M.S.) in Statistics | West Virginia University, USA (Aug 2004
             self.assertEqual(again[0][0], cv_path)
             self.assertIn("ai_product_director", again[1][0].parts)
 
-    def test_customize_opens_the_best_saved_cv_for_the_job_title(self) -> None:
+    def test_customize_writes_a_pair_from_the_best_saved_cv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_sample_project(root)
@@ -759,9 +762,71 @@ Master of Science (M.S.) in Statistics | West Virginia University, USA (Aug 2004
                 description="Product Manager for a trading platform.",
             )
             spec = runner.customize_for_job(job)
-            self.assertEqual(spec.area, "product_manager")
-            self.assertFalse((generated / "custom_95057500").exists())
+            self.assertEqual(spec.area, "custom_95057500")
+            self.assertEqual(spec.title, "Product Manager")
+            custom = generated / "custom_95057500"
+            self.assertTrue((custom / "cv.pdf").read_bytes().startswith(b"%PDF"))
+            self.assertTrue((custom / "cover_letter.pdf").read_bytes().startswith(b"%PDF"))
             self.assertEqual((generated / "full_stack_development" / "cv.pdf").read_bytes(), b"%PDF-1.4 existing\n")
+            self.assertEqual((generated / "product_manager" / "cv.pdf").read_bytes(), b"%PDF-1.4 existing\n")
+            report = assess_match(
+                job.description,
+                [spec],
+                profile.interested_keywords,
+                profile.candidate,
+                job.title,
+            )
+            self.assertEqual(report.closest, "Product Manager")
+            self.assertGreaterEqual(report.match, 0)
+            self.assertLessEqual(report.match, 100)
+
+    def test_extra_cv_skills_do_not_wipe_out_a_real_overlap(self) -> None:
+        spec = Specialization(
+            area="ai_engineer",
+            title="AI Engineer",
+            summary="Builds agentic systems.",
+            skills=[
+                "Python",
+                "React",
+                "SQL",
+                "Management",
+                "Planning",
+                "Operations",
+                "Roadmap",
+                "Agile",
+                "SDLC",
+                "UAT",
+                "Stakeholder",
+                "Deployment",
+            ],
+        )
+        report = assess_match(
+            "We need an AI Engineer who knows Python and React.",
+            [spec],
+            ["Python", "Full Stack", "AI Engineer"],
+            CandidateBaseline(name="Ada", skills=["Python", "React"]),
+            "AI Engineer",
+        )
+        self.assertEqual(report.match, 38)
+        self.assertEqual(report.proceed, 38)
+        self.assertIn("This job matches 3 of your keywords.", report.reason)
+        self.assertIn("8 or more is 100/100, so this is 38/100.", report.reason)
+        self.assertIn("Matched: AI Engineer, Python, React.", report.reason)
+        self.assertNotIn("Full Stack", report.reason.split("Matched:", 1)[-1].split("The job also", 1)[0])
+        self.assertIn("Job title shares 1 word with this CV: ai.", report.reason)
+
+    def test_eight_job_keywords_is_a_full_score(self) -> None:
+        spec = Specialization(
+            area="ai_engineer",
+            title="AI Engineer",
+            summary="",
+            skills=["Python", "React", "SQL", "TypeScript", "FastAPI", "AWS", "Docker", "Kubernetes", "Go"],
+        )
+        job = "Python React SQL TypeScript FastAPI AWS Docker Kubernetes and also Go and Java."
+        report = assess_match(job, [spec], ["Python"], CandidateBaseline(name="Ada", skills=["Python"]), "Backend Engineer")
+        self.assertEqual(report.match, 100)
+        self.assertIn("This job matches 9 of your keywords.", report.reason)
+        self.assertIn("The job also asks for: Java.", report.reason)
 
     def test_analysis_screen_has_customize_above_the_cv_row(self) -> None:
         import tkinter as tk
@@ -795,6 +860,133 @@ Master of Science (M.S.) in Statistics | West Virginia University, USA (Aug 2004
             app.close()
             self.assertLess(labels.index("Customize"), labels.index("Open folder"))
             self.assertLess(labels.index("Open folder"), labels.index("Go back"))
+
+    def test_playwright_stays_connected_and_can_upload_the_cv(self) -> None:
+        import tkinter as tk
+
+        from src.gui.app import JobHunterApp
+
+        class _Session:
+            def __init__(self) -> None:
+                self.events: list[str] = []
+
+            async def __aenter__(self) -> _Session:
+                self.events.append("enter")
+                return self
+
+            async def __aexit__(self, *_args: object) -> None:
+                self.events.append("exit")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_sample_project(root)
+            window = tk.Tk()
+            window.withdraw()
+            app = JobHunterApp(root, window=window)
+            session = _Session()
+            app.runner._attached_browser = lambda: session  # type: ignore[method-assign]
+            future = asyncio.run_coroutine_threadsafe(app._connect(), app.loop)
+            future.result(timeout=5)
+            self.assertIs(app.client, session)
+            self.assertEqual(session.events, ["enter"])
+            app.job = JobListing(
+                job_id="python-engineer",
+                title="Python Engineer",
+                url="https://hk.jobsdb.com/job/12345",
+                description="Python services.",
+            )
+            app.report = MatchAssessment(80, 70, "Closest saved CV is Software Engineer.", "Software Engineer")
+            app.show_analysis()
+            labels: list[str] = []
+
+            def _texts(widget: tk.Misc) -> None:
+                if isinstance(widget, tk.Label):
+                    labels.append(str(widget.cget("text")))
+                for child in widget.winfo_children():
+                    _texts(child)
+
+            _texts(app.body)
+            window.update_idletasks()
+            app.close()
+            self.assertLess(labels.index("Customize"), labels.index("Choose file to upload"))
+            self.assertLess(labels.index("Choose file to upload"), labels.index("Open folder"))
+
+    def test_upload_sends_the_file_the_person_picks(self) -> None:
+        import tkinter as tk
+        from unittest.mock import patch
+
+        from src.gui.app import JobHunterApp
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_sample_project(root)
+            chosen = root / "docs" / "cv.pdf"
+            chosen.write_bytes(b"%PDF-1.4 mine\n")
+            window = tk.Tk()
+            window.withdraw()
+            app = JobHunterApp(root, window=window)
+            app.client = object()
+            with patch("src.gui.app.filedialog.askopenfilename", return_value=str(chosen)):
+                picked = app._choose_upload_file()
+            self.assertEqual(picked, chosen)
+            future = asyncio.run_coroutine_threadsafe(app._close_browser(), app.loop)
+            future.result(timeout=5)
+            self.assertIsNone(app.client)
+            with (
+                patch("src.gui.app.subprocess.run") as copied,
+                patch("src.gui.app.subprocess.Popen") as revealed,
+            ):
+                app._stage_upload(chosen)
+            self.assertEqual(copied.call_args.args[0], ["pbcopy"])
+            self.assertEqual(revealed.call_args.args[0][:2], ["open", "-R"])
+            with patch("src.gui.app.filedialog.askopenfilename", return_value=""):
+                self.assertIsNone(app._choose_upload_file())
+            app.close()
+
+    async def test_upload_places_the_file_on_the_page_field(self) -> None:
+        class _Tool:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.inputSchema = {"type": "object", "properties": {"code": {}, "paths": {}}}
+
+        class _Block:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+        class _Result:
+            def __init__(self, text: str, *, error: bool = False) -> None:
+                self.content = [_Block(text)]
+                self.isError = error
+
+        class _Client:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            async def call_tool(self, name: str, payload: dict[str, object]) -> _Result:
+                self.calls.append((name, dict(payload)))
+                if name == "browser_file_upload":
+                    return _Result("No file chooser visible", error=True)
+                return _Result('### Result\n"set:cv.pdf"')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chosen = Path(tmp) / "cv.pdf"
+            chosen.write_bytes(b"%PDF-1.4 mine\n")
+            script = file_input_script(chosen)
+            self.assertIn("input[type=\"file\"]", script)
+            self.assertIn("cv.pdf", script)
+            self.assertIn("application/pdf", script)
+            browser = _Client()
+            session = _ChromeSession(
+                browser,
+                [_Tool("browser_file_upload"), _Tool("browser_run_code_unsafe")],
+                timeout=5,
+            )
+            placed = await session.upload([chosen])
+            self.assertEqual(placed, "set:cv.pdf")
+            self.assertEqual(browser.calls[0][0], "browser_file_upload")
+            self.assertNotIn("paths", browser.calls[0][1])
+            self.assertEqual(browser.calls[1][0], "browser_run_code_unsafe")
+            self.assertIn("cv.pdf", str(browser.calls[1][1]["code"]))
 
     async def test_skip_list_blocks_a_matching_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

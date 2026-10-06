@@ -129,7 +129,7 @@ def _skills(skill_lines: list[str], raw: str) -> list[str]:
             seen.add(key)
             found.append(label)
 
-    for key, label in SKILL_NAMES.items():
+    for key, label in sorted(SKILL_NAMES.items(), key=lambda item: len(item[0]), reverse=True):
         if contains_term(raw, key):
             add(label)
     for line in skill_lines:
@@ -138,7 +138,7 @@ def _skills(skill_lines: list[str], raw: str) -> list[str]:
             label = piece.strip(" .")
             if 1 < len(label) <= 32 and ":" not in label:
                 add(label)
-    return found[:20]
+    return found[:32]
 
 
 def _collect_lines(lines: list[str]) -> list[str]:

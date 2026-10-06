@@ -20,6 +20,22 @@ _GENERIC = {
     "with",
     "role",
 }
+# Too broad to count. They show up in almost every post and would force 100.
+_BROAD = {
+    "management",
+    "planning",
+    "operations",
+    "stakeholder",
+    "requirements",
+    "deployment",
+    "roadmap",
+    "onsite",
+    "backend",
+    "frontend",
+    "leadership",
+}
+# Eight job keywords you already have is a full score. The rest of either list does not raise or lower it.
+EXCELLENT_KEYWORD_HITS = 8
 
 LOW_MATCH_SCORE = 0.2
 TAILOR_SCORE = 0.6
@@ -44,11 +60,14 @@ def choose_materials(
         return None
     ranked = sorted(
         specs,
-        key=lambda spec: (title_overlap(job_title, spec), score_match(job_text, spec, keywords)),
+        key=lambda spec: (
+            title_overlap(job_title, spec),
+            score_match(job_text, spec, keywords, baseline),
+        ),
         reverse=True,
     )
     spec = ranked[0]
-    score = score_match(job_text, spec, keywords)
+    score = score_match(job_text, spec, keywords, baseline)
     emphasis = emphasis_skills(job_text, baseline, spec)
     return MaterialChoice(
         specialization=spec,
@@ -77,13 +96,9 @@ def assess_match(
     choice = choose_materials(job_text, specs, keywords, baseline, job_title)
     if choice is None:
         return MatchAssessment(0, 0, "No saved CV to compare with this post.", "")
-    match = _percent(choice.score * 100)
+    score, reason = explain_match(job_text, choice.specialization, keywords, baseline, job_title)
+    match = _percent(score * 100)
     title = choice.specialization.title or choice.specialization.area
-    shared = [skill for skill in choice.specialization.skills if contains_term(job_text, skill)]
-    if shared:
-        reason = f"Closest saved CV is {title}. The post shares {', '.join(shared[:6])}."
-    else:
-        reason = f"Closest saved CV is {title}. The post does not share that CV's listed skills."
     return MatchAssessment(match=match, proceed=match, reason=reason, closest=title)
 
 
@@ -118,20 +133,110 @@ def _title_tokens(text: str) -> set[str]:
     return {word for word in re.findall(r"[a-z0-9]+", text.lower()) if len(word) > 1 and word not in _GENERIC}
 
 
-def score_match(job_text: str, spec: Specialization, keywords: list[str]) -> float:
-    haystack = job_text.lower()
-    needles: list[str] = []
-    seen: set[str] = set()
-    for item in [*spec.skills, *keywords]:
-        text = item.strip().lower()
-        if len(text) < 2 or text in _GENERIC or text in seen:
-            continue
-        seen.add(text)
-        needles.append(text)
-    if not needles:
+def score_match(
+    job_text: str,
+    spec: Specialization,
+    keywords: list[str],
+    baseline: CandidateBaseline | None = None,
+) -> float:
+    """How many keywords the job uses that you already have. Eight is a full score."""
+    matched, _unmet = _job_keyword_overlap(job_text, spec, keywords, baseline)
+    if not matched:
         return 0.0
-    hits = sum(1 for needle in needles if contains_term(haystack, needle))
-    return round(hits / len(needles), 4)
+    return round(min(1.0, len(matched) / EXCELLENT_KEYWORD_HITS), 4)
+
+
+def explain_match(
+    job_text: str,
+    spec: Specialization,
+    keywords: list[str],
+    baseline: CandidateBaseline | None = None,
+    job_title: str = "",
+) -> tuple[float, str]:
+    """Score the job's own keywords against yours, and spell out the count."""
+    matched, unmet = _job_keyword_overlap(job_text, spec, keywords, baseline)
+    score = 0.0 if not matched else min(1.0, len(matched) / EXCELLENT_KEYWORD_HITS)
+    points = _percent(score * 100)
+    title = spec.title or spec.area or "saved CV"
+    lines = [
+        f"Closest CV: {title}.",
+        (
+            f"This job matches {len(matched)} of your keywords. "
+            f"{EXCELLENT_KEYWORD_HITS} or more is 100/100, so this is {points}/100."
+        ),
+        "Matched: " + (", ".join(matched) if matched else "none") + ".",
+    ]
+    if unmet:
+        shown = unmet[:12]
+        rest = len(unmet) - len(shown)
+        tail = f", and {rest} more" if rest else ""
+        lines.append("The job also asks for: " + ", ".join(shown) + tail + ".")
+    if job_title.strip():
+        shared = sorted(_title_tokens(job_title) & _title_tokens(f"{spec.title} {spec.area.replace('_', ' ')}"))
+        if shared:
+            word = "word" if len(shared) == 1 else "words"
+            lines.append(f"Job title shares {len(shared)} {word} with this CV: {', '.join(shared)}.")
+        else:
+            lines.append("Job title shares no words with this CV.")
+    return round(score, 4), "\n".join(lines)
+
+
+def _job_keyword_overlap(
+    job_text: str,
+    spec: Specialization,
+    keywords: list[str],
+    baseline: CandidateBaseline | None,
+) -> tuple[list[str], list[str]]:
+    """Keywords the job uses, split into ones you have and ones you do not."""
+    yours = _user_terms(spec, keywords, baseline)
+    owned = {term.lower() for term in yours}
+    phrases = _phrases_in_job(job_text, [*yours, *SKILL_NAMES.values()])
+    matched = [phrase for phrase in phrases if phrase.lower() in owned]
+    unmet = [phrase for phrase in phrases if phrase.lower() not in owned]
+    return matched, unmet
+
+
+def _user_terms(
+    spec: Specialization,
+    keywords: list[str],
+    baseline: CandidateBaseline | None,
+) -> list[str]:
+    owned = [*keywords, *spec.skills]
+    if baseline is not None:
+        owned.extend(baseline.skills)
+    found: list[str] = []
+    seen: set[str] = set()
+    for item in owned:
+        text = item.strip()
+        key = text.lower()
+        if len(key) < 2 or key in _GENERIC or key in _BROAD or key in seen:
+            continue
+        seen.add(key)
+        found.append(text)
+    return found
+
+
+def _phrases_in_job(job_text: str, phrases: list[str]) -> list[str]:
+    haystack = job_text.lower()
+    found: list[str] = []
+    seen: set[str] = set()
+    for item in phrases:
+        text = item.strip()
+        key = text.lower()
+        if len(key) < 2 or key in _GENERIC or key in _BROAD or key in seen:
+            continue
+        if not contains_term(haystack, key):
+            continue
+        seen.add(key)
+        found.append(text)
+    found.sort(key=len, reverse=True)
+    kept: list[str] = []
+    for phrase in found:
+        if any(contains_term(longer, phrase) for longer in kept):
+            continue
+        kept.append(phrase)
+    kept.sort(key=str.lower)
+    return kept
 
 
 def emphasis_skills(job_text: str, baseline: CandidateBaseline, spec: Specialization) -> list[str]:

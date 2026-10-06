@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import sys
 import threading
 import tkinter as tk
+from tkinter import filedialog
 from datetime import datetime, timezone
 from pathlib import Path
 from src.cli.human_input import HumanInput
@@ -33,6 +35,8 @@ _SLATE_SOFT = "#2C3844"
 _SLATE_ACTIVE = "#5A6B7C"
 _DISABLED_FACE = "#242B32"
 _DISABLED_INK = "#6A7560"
+
+logger = logging.getLogger("jobhunter.gui")
 
 
 class GuiConsole(Console):
@@ -204,7 +208,7 @@ class JobHunterApp:
         name = self.site.site_name if self.site is not None else "Site"
         self._clear()
         self._heading(name)
-        self._note("The site is open. Open a job post in that window, then read the page.")
+        self._note("Leave the Playwright bar up. Click the job, then Read page.")
         self._wide_button("Read page", self._read_page)
         self._paint_button(
             self.body,
@@ -233,7 +237,7 @@ class JobHunterApp:
         )
         reason = tk.Text(
             self.body,
-            height=5,
+            height=9,
             wrap="word",
             bg=_FIELD,
             fg=_INK,
@@ -248,6 +252,7 @@ class JobHunterApp:
         reason.bind("<Key>", lambda _event: "break")
         reason.pack(fill="x", pady=(4, 14))
         self._wide_button("Customize", self._customize)
+        self._wide_button("Choose file to upload", self._upload_cv)
         suggestion = tk.Frame(self.body, bg=_PAPER)
         suggestion.pack(fill="x", pady=(4, 16))
         suggestion.columnconfigure(0, weight=1)
@@ -351,23 +356,24 @@ class JobHunterApp:
         async def work() -> str:
             await self._close_browser()
             self.runner.config.chrome_profile = profile_number
-            self._browser_cm = self.runner._attached_browser()
-            self.client = await self._browser_cm.__aenter__()
+            await self._connect()
             await self.client.navigate(site.url)
             return site.site_name
 
         def opened(name: str) -> None:
-            self._log(f"{name} is open.")
+            self._log(f"{name} is open. Leave the Playwright bar up.")
             self.show_ready()
 
         self._run_async(work(), opened, f"Opening {site.site_name}.")
 
     def _read_page(self) -> None:
-        if self.client is None or self.site is None:
+        if self.site is None:
             self._log("Open a site before reading the page.")
             return
 
         async def work() -> tuple[JobListing, MatchAssessment] | None:
+            if self.client is None:
+                await self._connect()
             if not self.runner.specs:
                 self.runner._load_existing_documents()
             page = await self.runner._read_listed_site(self.client, [self.site])
@@ -398,6 +404,63 @@ class JobHunterApp:
             self.show_analysis()
 
         self._run_async(work(), shown, "Reading the open job.")
+
+    def _upload_cv(self) -> None:
+        chosen = self._choose_upload_file()
+        if chosen is None:
+            self._log("Upload cancelled.")
+            return
+        if not chosen.is_file():
+            self._log(f"File is missing: {chosen}")
+            return
+
+        async def work() -> str:
+            await self._close_browser()
+            return str(chosen.resolve())
+
+        def released(path: str) -> None:
+            self._stage_upload(Path(path))
+            self._log(
+                f"Playwright is off. Drag {Path(path).name} from Finder onto the upload box. "
+                "Or click the box, press Shift-Command-G, and paste. Read page connects again after that."
+            )
+
+        self._run_async(work(), released, "Releasing Playwright so the site upload box can take the file.")
+
+    def _choose_upload_file(self) -> Path | None:
+        """Ask in this window. Chrome's own file window stays closed while Playwright is attached."""
+        chosen = filedialog.askopenfilename(
+            parent=self.window,
+            title="Choose the file to upload",
+            initialdir=str(self._upload_start_dir()),
+            filetypes=[
+                ("Documents", "*.pdf *.docx *.doc *.txt"),
+                ("PDF", "*.pdf"),
+                ("Word", "*.docx *.doc"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not chosen:
+            return None
+        return Path(chosen)
+
+    def _upload_start_dir(self) -> Path:
+        spec = self._suggested_spec()
+        if spec is not None:
+            folder = self.runner.paths.specialization_dir(spec.area)
+            if folder.is_dir():
+                return folder
+        for folder in (self.project_root / "generated_docs", self.project_root / "docs", self.project_root):
+            if folder.is_dir():
+                return folder
+        return self.project_root
+
+    def _stage_upload(self, path: Path) -> None:
+        """Show the file in Finder and copy its path. The site dialog works once Playwright is off."""
+        resolved = path.resolve()
+        if sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=str(resolved), text=True, check=False)
+            subprocess.Popen(["open", "-R", str(resolved)])
 
     def _record(self) -> None:
         if self.job is None or self.report is None:
@@ -442,17 +505,28 @@ class JobHunterApp:
         job = self.job
 
         def work():  # type: ignore[no-untyped-def]
-            return self.runner.customize_for_job(job)
+            spec = self.runner.customize_for_job(job)
+            report = assess_match(
+                job.description,
+                [spec],
+                self.runner.profile.interested_keywords,
+                self.runner.profile.candidate,
+                job.title,
+            )
+            report = self.runner._llm_match_review(job, report, [spec])
+            return spec, report
 
-        def ready(spec) -> None:  # type: ignore[no-untyped-def]
+        def ready(result) -> None:  # type: ignore[no-untyped-def]
+            spec, report = result
             self.pinned = spec
-            folder = self.runner.paths.specialization_dir(spec.area)
-            self._log(f"Best CV for this job: {spec.title}")
-            self._log(str(folder))
+            self.report = report
+            cv_path, letter_path = self.runner._material_paths(spec)
+            self._log(f"Custom CV: {cv_path}")
+            self._log(f"Custom cover letter: {letter_path}")
+            self._log(f"Likelihood {report.match}/100. Success rate {report.proceed}/100.")
             self.show_analysis()
-            _reveal(folder)
 
-        self._run_thread(work, ready, "Finding the closest saved CV for this job title.")
+        self._run_thread(work, ready, "Writing a CV and cover letter for this job.")
 
     def _open_cv_folder(self) -> None:
         spec = self._suggested_spec()
@@ -480,12 +554,23 @@ class JobHunterApp:
 
         self._run_async(self._close_browser(), left, "Closing the browser session.")
 
+    async def _connect(self) -> None:
+        """Keep one Playwright session for this site so later reads see the same tabs."""
+        if self.client is not None:
+            return
+        self._browser_cm = self.runner._attached_browser()
+        self.client = await self._browser_cm.__aenter__()
+
     async def _close_browser(self) -> None:
         browser = self._browser_cm
         self._browser_cm = None
         self.client = None
-        if browser is not None:
+        if browser is None:
+            return
+        try:
             await browser.__aexit__(None, None, None)
+        except Exception:
+            logger.info("Chrome session was already closed")
 
     def _run_thread(self, work, done, busy: str) -> None:  # type: ignore[no-untyped-def]
         if self._busy:
